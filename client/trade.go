@@ -51,7 +51,7 @@ func (c *TradingClient) Trade(until time.Time) {
 	priceHist := [3]float64{}
 	var priceHistIdx int
 
-	lastMinMaxPrintout := time.Now()
+	//lastMinMaxPrintout := time.Now()
 
 	var turnDown, turnUp bool
 
@@ -88,7 +88,7 @@ func (c *TradingClient) Trade(until time.Time) {
 				log.Fatalf("failed to sell asset %v: %v", ownAsset, err)
 			}
 
-			log.Printf("--> win %.3f\n", (price-lastBuyPrice)*ownAsset.Amount)
+			log.Printf("--> win %.3f, balance %.3f\n", (price-lastBuyPrice)*ownAsset.Amount, acc2.Balance)
 
 			sell = false
 			ownAsset = nil

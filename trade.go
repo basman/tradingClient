@@ -17,7 +17,7 @@ func main() {
 
 	client := client2.NewClient(hostname, login, password)
 
-	client.Observe(time.Now().Add(20 * time.Second))
+	client.Observe(time.Now().Add(2 * time.Second))
 
 	client.Trade(time.Now().Add(tradeDuration))
 }
