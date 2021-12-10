@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"time"
+	"tradingClient/persist"
 )
 
 func (c *TradingClient) Trade(until time.Time) {
@@ -40,14 +41,18 @@ func (c *TradingClient) Trade(until time.Time) {
 		}
 	}(asset.Name)
 
-	sell := false
+	var sell bool
+	var lastBuyPrice float64
 	ownAsset := acc.GetAsset(asset.Name)
 
 	if ownAsset != nil {
 		sell = true
+		deal := persist.Load()
+		if deal != nil {
+			lastBuyPrice = deal.Price
+		}
 	}
 
-	var lastBuyPrice float64
 	priceHist := [3]float64{}
 	var priceHistIdx int
 
@@ -104,9 +109,16 @@ func (c *TradingClient) Trade(until time.Time) {
 			}
 
 			lastBuyPrice = price
+			ownAsset = acc2.GetAsset(asset.Name)
+			deal := persist.Deal{
+				Time:   time.Now(),
+				Asset:  asset.Name,
+				Amount: ownAsset.Amount,
+				Price:  price,
+			}
+			deal.Store()
 
 			sell = true
-			ownAsset = acc2.GetAsset(asset.Name)
 			acc = acc2
 		}
 	}
