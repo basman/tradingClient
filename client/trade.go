@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"math"
 	"net/http"
 	"time"
 )
@@ -48,36 +47,49 @@ func (c *TradingClient) Trade(until time.Time) {
 		sell = true
 	}
 
+	var lastBuyPrice float64
+	priceHist := [3]float64{}
+	var priceHistIdx int
+
 	lastMinMaxPrintout := time.Now()
 
-	targetPriceBuy := math.Min(asset.minSeen * 1.1, asset.maxSeen / 1.1)
-	targetPriceSell := math.Max(asset.minSeen * 1.1, asset.maxSeen / 1.1)
+	var turnDown, turnUp bool
+
 	for price := range priceFlow {
-		// constantly track new min/max FIXME this will tend to use extremer values over time
-		if price < asset.minSeen {
-			asset.minSeen = price
-			targetPriceBuy = math.Min(asset.minSeen * 1.1, asset.maxSeen / 1.1)
-			targetPriceSell = math.Max(asset.minSeen * 1.1, asset.maxSeen / 1.1)
-			if lastMinMaxPrintout.Add(5 * time.Second).Before(time.Now()) {
-				lastMinMaxPrintout = time.Now()
-				log.Printf("new min price %.3f\n", price)
-			}
-		}
-		if price > asset.maxSeen {
-			asset.maxSeen = price
-			targetPriceBuy = math.Min(asset.minSeen * 1.1, asset.maxSeen / 1.1)
-			targetPriceSell = math.Max(asset.minSeen * 1.1, asset.maxSeen / 1.1)
-			if lastMinMaxPrintout.Add(5 * time.Second).Before(time.Now()) {
-				lastMinMaxPrintout = time.Now()
-				log.Printf("new max price %.3f\n", price)
-			}
+		// store next price sample
+		priceHistIdx = (priceHistIdx + 1) % len(priceHist)
+		priceHist[priceHistIdx] = price
+
+		prev := priceHist[(priceHistIdx-1+len(priceHist))%len(priceHist)]
+		prev2 := priceHist[(priceHistIdx-2+len(priceHist))%len(priceHist)]
+
+		if prev == 0 || prev2 == 0 {
+			// fill the price tracking array before jumping to conclusions
+			continue
 		}
 
-		if sell && price >= targetPriceSell {
+		if prev2 < prev && price < prev {
+			turnDown = true
+			log.Printf("price turns down (%.3f,%.3f,%.3f)\n", prev2, prev, price)
+		} else {
+			turnDown = false
+		}
+
+		if prev2 > prev && price > prev {
+			turnUp = true
+			log.Printf("price turns up (%.3f,%.3f,%.3f)\n", prev2, prev, price)
+		} else {
+			turnUp = false
+		}
+
+		if sell && turnDown && (price > lastBuyPrice || lastBuyPrice == 0) {
 			acc2, err := c.Sell(*ownAsset, acc)
 			if err != nil {
 				log.Fatalf("failed to sell asset %v: %v", ownAsset, err)
 			}
+
+			log.Printf("--> win %.3f\n", (price-lastBuyPrice)*ownAsset.Amount)
+
 			sell = false
 			ownAsset = nil
 			acc = acc2
@@ -85,11 +97,14 @@ func (c *TradingClient) Trade(until time.Time) {
 			if time.Now().After(until) {
 				break
 			}
-		} else if !sell && price <= targetPriceBuy {
+		} else if !sell && turnUp {
 			acc2, err := c.Buy(*asset, acc)
 			if err != nil {
 				log.Fatalf("failed to buy asset %v: %v", asset, err)
 			}
+
+			lastBuyPrice = price
+
 			sell = true
 			ownAsset = acc2.GetAsset(asset.Name)
 			acc = acc2
