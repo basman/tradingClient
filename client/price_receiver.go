@@ -67,7 +67,7 @@ func (priceRec *priceReceiver) feed() {
 	for {
 		select {
 		case <- priceRec.stop:
-			priceRec.conn.Close()
+			priceRec.conn.Close() // FIXME leads to goroutine above to show an error, despite shutdown is intended
 			return
 		case ma := <- ch:
 			priceRec.updates <- ma
