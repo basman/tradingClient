@@ -27,15 +27,22 @@ func (c *TradingClient) Trade(until time.Time) {
 
 	// fill priceFlow
 	go func(assetName string) {
+		lastUpdate := time.Now()
 		for {
 			select {
-			case ma, ok := <- c.priceUpdate:
+			case ma, ok := <-c.priceUpdate:
 				if !ok {
 					return
 				}
 
 				if ma.Name == assetName {
 					priceFlow <- ma.Price
+					lastUpdate = time.Now()
+				}
+			case <-time.After(time.Minute):
+				if lastUpdate.Add(time.Minute).Before(time.Now()) {
+					log.Fatal("no price update for more than 1 minute. aborting.")
+					close(priceFlow)
 				}
 			}
 		}
