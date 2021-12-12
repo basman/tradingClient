@@ -37,6 +37,7 @@ func (c *TradingClient) Trade(until time.Time) {
 				log.Printf("Ignoring stored deal, as it is from different asset.")
 			} else {
 				lastBuyPrice = deal.Price
+				initialBalance += deal.Price*deal.Amount
 			}
 		}
 	}
