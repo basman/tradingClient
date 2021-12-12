@@ -11,6 +11,8 @@ import (
 	"tradingClient/persist"
 )
 
+const maxAgePriceMessage = 10
+
 func (c *TradingClient) Trade(until time.Time) {
 	asset := c.chooseBestAsset()
 	acc := c.getAccount()
@@ -23,32 +25,6 @@ func (c *TradingClient) Trade(until time.Time) {
 	priceRec := c.newPriceReceiver()
 	defer priceRec.Stop()
 
-	priceFlow := make(chan float64)
-
-	// fill priceFlow
-	go func(assetName string) {
-		lastUpdate := time.Now()
-		for {
-			select {
-			case ma, ok := <-c.priceUpdate:
-				if !ok {
-					return
-				}
-
-				// FIXME check timestamp. if price is too old, don't forward it
-				if ma.Name == assetName {
-					priceFlow <- ma.Price
-					lastUpdate = time.Now()
-				}
-			case <-time.After(time.Minute):
-				if lastUpdate.Add(time.Minute).Before(time.Now()) {
-					log.Fatal("no price update for more than 1 minute. aborting.")
-					close(priceFlow)
-				}
-			}
-		}
-	}(asset.Name)
-
 	var sell bool
 	var lastBuyPrice float64
 	ownAsset := acc.GetAsset(asset.Name)
@@ -57,7 +33,11 @@ func (c *TradingClient) Trade(until time.Time) {
 		sell = true
 		deal := persist.Load()
 		if deal != nil {
-			lastBuyPrice = deal.Price
+			if deal.Asset != asset.Name {
+				log.Printf("Ignoring stored deal, as it is from different asset.")
+			} else {
+				lastBuyPrice = deal.Price
+			}
 		}
 	}
 
@@ -68,10 +48,18 @@ func (c *TradingClient) Trade(until time.Time) {
 
 	var turnDown, turnUp bool
 
-	for price := range priceFlow {
+	for ma := range c.priceUpdate {
+		if ma.Name != asset.Name {
+			continue
+		}
+		if ma.When.Add(maxAgePriceMessage * time.Second).Before(time.Now()) {
+			log.Printf("WARNING: ignoring price update (time skew): %v\n", ma)
+			continue
+		}
+
 		// store next price sample
 		priceHistIdx = (priceHistIdx + 1) % len(priceHist)
-		priceHist[priceHistIdx] = price
+		priceHist[priceHistIdx] = ma.Price
 
 		prev := priceHist[(priceHistIdx-1+len(priceHist))%len(priceHist)]
 		prev2 := priceHist[(priceHistIdx-2+len(priceHist))%len(priceHist)]
@@ -81,27 +69,27 @@ func (c *TradingClient) Trade(until time.Time) {
 			continue
 		}
 
-		if prev2 < prev && price < prev {
+		if prev2 < prev && ma.Price < prev {
 			turnDown = true
-			log.Printf("price turns down (%.3f,%.3f,%.3f)\n", prev2, prev, price)
+			log.Printf("price turns down (%.3f,%.3f,%.3f)\n", prev2, prev, ma.Price)
 		} else {
 			turnDown = false
 		}
 
-		if prev2 > prev && price > prev {
+		if prev2 > prev && ma.Price > prev {
 			turnUp = true
-			log.Printf("price turns up (%.3f,%.3f,%.3f)\n", prev2, prev, price)
+			log.Printf("price turns up (%.3f,%.3f,%.3f)\n", prev2, prev, ma.Price)
 		} else {
 			turnUp = false
 		}
 
-		if sell && turnDown && (price > lastBuyPrice || lastBuyPrice == 0) {
+		if sell && turnDown && (ma.Price > lastBuyPrice || lastBuyPrice == 0) {
 			acc2, err := c.Sell(*ownAsset, acc)
 			if err != nil {
 				log.Fatalf("failed to sell asset %v: %v", ownAsset, err)
 			}
 
-			log.Printf("--> win %.3f, balance %.3f\n", (price-lastBuyPrice)*ownAsset.Amount, acc2.Balance)
+			log.Printf("--> win %.3f, balance %.3f\n", (ma.Price-lastBuyPrice)*ownAsset.Amount, acc2.Balance)
 
 			sell = false
 			ownAsset = nil
@@ -116,13 +104,13 @@ func (c *TradingClient) Trade(until time.Time) {
 				log.Fatalf("failed to buy asset %v: %v", asset, err)
 			}
 
-			lastBuyPrice = price
+			lastBuyPrice = ma.Price
 			ownAsset = acc2.GetAsset(asset.Name)
 			deal := persist.Deal{
 				Time:   time.Now(),
 				Asset:  asset.Name,
 				Amount: ownAsset.Amount,
-				Price:  price,
+				Price:  ma.Price,
 			}
 			deal.Store()
 
@@ -131,7 +119,6 @@ func (c *TradingClient) Trade(until time.Time) {
 		}
 	}
 
-	priceRec.Stop()
 	log.Printf("final balance: %.3f  win: %3f\n", acc.Balance, acc.Balance-initialBalance)
 }
 
@@ -146,7 +133,7 @@ func (c *TradingClient) chooseBestAsset() *MarketAsset {
 	return max
 }
 
-func (c *TradingClient) Buy(asset MarketAsset, account *Account)  (*Account, error) {
+func (c *TradingClient) Buy(asset MarketAsset, account *Account) (*Account, error) {
 	amount := account.Balance / asset.Price * 0.95 // small margin allowing for price skew
 
 	trans := &Transaction{
@@ -154,7 +141,7 @@ func (c *TradingClient) Buy(asset MarketAsset, account *Account)  (*Account, err
 		Amount: amount,
 	}
 
-	log.Printf("buy %.3f units of %v for %.3f\n", amount, asset.Name, account.Balance * 0.95)
+	log.Printf("buy %.3f units of %v for %.3f\n", amount, asset.Name, account.Balance*0.95)
 
 	bytebuf, err := json.Marshal(trans)
 	if err != nil {
@@ -239,4 +226,3 @@ func (c *TradingClient) Sell(asset UserAsset, account *Account) (*Account, error
 
 	return acc, nil
 }
-

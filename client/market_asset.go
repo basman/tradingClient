@@ -2,11 +2,13 @@ package client
 
 import (
 	"fmt"
+	"time"
 )
 
 type MarketAsset struct {
-	Name string
+	Name  string
 	Price float64 `json:",string"`
+	When  time.Time
 
 	maxSeen float64
 	minSeen float64

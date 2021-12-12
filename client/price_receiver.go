@@ -17,12 +17,15 @@ type priceReceiver struct {
 
 func (c *TradingClient) newPriceReceiver() *priceReceiver {
 	reqHeader := http.Header{
-		"Authorization" :
-		{"Basic " + base64.StdEncoding.EncodeToString([]byte(c.login+":"+c.password))},
+		"Authorization": {"Basic " + base64.StdEncoding.EncodeToString([]byte(c.login+":"+c.password))},
 	}
 	conn, res, err := websocket.DefaultDialer.Dial(fmt.Sprintf("ws://%v:8002/rates/stream", c.hostname), reqHeader)
 	if err != nil {
-		log.Fatalf("newPriceReceiver: could not connect to websocket; HTTP status=%v '%v'; %v", res.StatusCode, res.Status, err)
+		if res != nil {
+			log.Fatalf("newPriceReceiver: could not connect to websocket; HTTP status=%v '%v'; %v", res.StatusCode, res.Status, err)
+		} else {
+			log.Fatalf("newPriceReceiver: could not connect to websocket: %v", err)
+		}
 	}
 
 	if res.StatusCode != http.StatusSwitchingProtocols && res.StatusCode != http.StatusOK {
@@ -46,30 +49,27 @@ func (priceRec *priceReceiver) Stop() {
 }
 
 func (priceRec *priceReceiver) feed() {
-	ch := make(chan MarketAsset)
+	defer priceRec.conn.Close()
 
-	go func() {
-		for {
+	outer:
+	for {
+		select {
+		case <-priceRec.stop:
+			break outer
+
+		default:
 			ma := MarketAsset{}
-			priceRec.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+			priceRec.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 			err := priceRec.conn.ReadJSON(&ma)
 			if err != nil {
-				log.Printf("read websocket stream failed: %v", err)
-				break
+				if err.Error() != "use of closed network connection" {
+					log.Printf("read websocket stream failed: %v", err)
+				}
+				close(priceRec.updates)
+				break outer
 			}
 			priceRec.conn.SetReadDeadline(time.Time{})
 
-			ch <- ma
-		}
-		priceRec.conn.Close()
-	}()
-
-	for {
-		select {
-		case <- priceRec.stop:
-			priceRec.conn.Close() // FIXME leads to goroutine above to show an error, despite shutdown is intended
-			return
-		case ma := <- ch:
 			priceRec.updates <- ma
 		}
 	}
