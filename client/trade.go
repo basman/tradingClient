@@ -35,6 +35,7 @@ func (c *TradingClient) Trade(until time.Time) {
 					return
 				}
 
+				// FIXME check timestamp. if price is too old, don't forward it
 				if ma.Name == assetName {
 					priceFlow <- ma.Price
 					lastUpdate = time.Now()
